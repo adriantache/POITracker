@@ -1,7 +1,9 @@
 package com.adriantache.poitracker
 
 import android.Manifest
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
 import android.os.Build
@@ -11,13 +13,23 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.adriantache.poitracker.broadcastReceivers.CityGeofenceBroadcastReceiver
 import com.adriantache.poitracker.data.POIList
+import com.adriantache.poitracker.data.RegionList
+import com.adriantache.poitracker.models.City
 import com.adriantache.poitracker.models.POIExpanded
+import com.adriantache.poitracker.utils.Utils
 import com.adriantache.poitracker.utils.Utils.getCity
+import com.adriantache.poitracker.utils.Utils.getListByDistance
+import com.adriantache.poitracker.utils.Utils.getRadius
+import com.adriantache.poitracker.utils.Utils.isInsideCity
+import com.google.android.gms.location.Geofence
+import com.google.android.gms.location.Geofence.NEVER_EXPIRE
+import com.google.android.gms.location.GeofencingClient
+import com.google.android.gms.location.GeofencingRequest
 import com.google.android.gms.location.LocationServices
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
-import io.reactivex.Observable
 import io.reactivex.Single
 import io.reactivex.android.schedulers.AndroidSchedulers
 import io.reactivex.disposables.CompositeDisposable
@@ -30,7 +42,15 @@ private const val POI_LIST = "poi_list"
 
 class MainActivity : AppCompatActivity() {
     private val disposables = CompositeDisposable()
+    private lateinit var geofencingClient: GeofencingClient
     private lateinit var poiList: MutableList<POIExpanded>
+
+    private val geofencePendingIntent: PendingIntent by lazy {
+        val intent = Intent(this, CityGeofenceBroadcastReceiver::class.java)
+        // We use FLAG_UPDATE_CURRENT so that we get the same pending intent back when calling
+        // addGeofences() and removeGeofences().
+        PendingIntent.getBroadcast(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -76,7 +96,7 @@ class MainActivity : AppCompatActivity() {
     //[IDEA:] generate custom areas depending on distance instead of relying on predefined regions
     private fun processPOIs() {
         //todo bin each location to a larger location (city) on first launch
-        val observable = Observable.just(POIList.values)
+        val observable = Single.just(POIList.values)
             .subscribeOn(Schedulers.io())
             .observeOn(AndroidSchedulers.mainThread())
 
@@ -141,6 +161,9 @@ class MainActivity : AppCompatActivity() {
         }, { error ->
             Toast.makeText(this, "Error getting user location!", Toast.LENGTH_SHORT).show()
             error.printStackTrace()
+
+            //todo set up city-level geofencing in this situation?
+//            setUpCityGeofences(null)
         })
     }
 
@@ -148,10 +171,105 @@ class MainActivity : AppCompatActivity() {
     private fun setUpGeofencing(userLocation: Location) {
         Log.d("TAG", userLocation.toString() + poiList.toString())
 
-        //if user is outside city, setup city geofences based on flight time to nearest city
-        //use rx
+        val city = isInsideCity(userLocation)
 
-        //if user is within city, setup location geofences based on distance to nearest POI
+        //todo remove these
+        Log.d("TAG", city.toString())
+        setUpCityGeofences(userLocation)
+
+        if (city == null) {
+            //if user is outside city, setup city geofences based on flight time to nearest city
+            //use rx
+            setUpCityGeofences(userLocation)
+        } else {
+            //if user is within city, setup location geofences based on distance to nearest POI
+            setUpPoiGeofences(userLocation)
+        }
+    }
+
+    private fun setUpCityGeofences(userLocation: Location) {
+        geofencingClient = LocationServices.getGeofencingClient(this)
+
+        val observable = Single.create<List<City>> {
+            //get the list as ordered by distance
+            val orderedList = getListByDistance(userLocation, RegionList.cities)
+
+            if (orderedList.isNotEmpty()) {
+                it.onSuccess(orderedList)
+            } else {
+                throw IllegalArgumentException("Error sorting list by distance.")
+            }
+        }.subscribeOn(Schedulers.io())
+            .observeOn(AndroidSchedulers.mainThread())
+
+        disposables += observable.subscribe({
+            val geofenceList = mutableListOf<Geofence>()
+
+            it.forEach { city ->
+                //calculate max speed as 100kph in m/ms
+                val maxSpeed = (100 * 1000) / (60 * 60 * 1000)
+                var notificationResponsiveness =
+                    (Utils.getDistance(userLocation, city.lat, city.long) / maxSpeed).toInt()
+                //prevent setting an unreasonably low (<2 min) or high (>1 hour) value
+                if (notificationResponsiveness < 1000 * 60 * 2) {
+                    notificationResponsiveness = 12_000
+                } else if (notificationResponsiveness > 1000 * 60 * 60) {
+                    notificationResponsiveness = 3_600_000
+                }
+
+                geofenceList.add(
+                    Geofence.Builder()
+                        .setRequestId(city.name)
+                        //loitering delay to prevent triggering geofence enter/exit events prematurely
+                        //todo tweak this value
+//                        .setLoiteringDelay(1000 * 30)
+                        //make geofence less responsive the farther away we are from a city
+                        //todo tweak this value
+                        .setNotificationResponsiveness(notificationResponsiveness)
+                        .setExpirationDuration(NEVER_EXPIRE)
+                        .setCircularRegion(
+                            city.lat,
+                            city.long,
+                            getRadius(city.areaKm2).toFloat()
+                        )
+                        .setTransitionTypes(
+                            Geofence.GEOFENCE_TRANSITION_ENTER or
+                                    Geofence.GEOFENCE_TRANSITION_EXIT
+                        )
+                        .build()
+                )
+
+                val geofencingRequest = GeofencingRequest.Builder().apply {
+                    setInitialTrigger(GeofencingRequest.INITIAL_TRIGGER_ENTER) //todo change this to dwell eventually
+                        .addGeofences(geofenceList)
+                }.build()
+
+                geofencingClient.addGeofences(geofencingRequest, geofencePendingIntent)?.run {
+                    addOnSuccessListener {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Geofences successfully added!",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                    addOnFailureListener {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Geofences could not be added!",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            }
+        }, { error ->
+            Toast.makeText(this, "Error setting up geofences!", Toast.LENGTH_SHORT).show()
+            error.printStackTrace()
+        })
+    }
+
+    private fun setUpPoiGeofences(userLocation: Location) {
+        geofencingClient = LocationServices.getGeofencingClient(this)
+
     }
 
     override fun onDestroy() {
