@@ -7,16 +7,26 @@ import androidx.appcompat.app.AppCompatActivity
 import com.adriantache.poitracker.data.POIList
 import com.adriantache.poitracker.models.POIExpanded
 import com.adriantache.poitracker.utils.Utils.getCity
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import io.reactivex.Observable
 import io.reactivex.android.schedulers.AndroidSchedulers
 import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.disposables.Disposable
 import io.reactivex.schedulers.Schedulers
+import androidx.core.app.ComponentActivity
+import androidx.core.app.ComponentActivity.ExtraData
+import androidx.core.content.ContextCompat.getSystemService
+import android.icu.lang.UCharacter.GraphemeClusterBreak.T
+
+
 
 private const val FIRST_LAUNCH = "first_launch"
+private const val POI_LIST = "poi_list"
 
 class MainActivity : AppCompatActivity() {
     private val disposables = CompositeDisposable()
+    private lateinit var poiList: MutableList<POIExpanded>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -29,7 +39,20 @@ class MainActivity : AppCompatActivity() {
         if (firstLaunch) {
             processPOIs()
         } else {
-            //todo get POI list from storage
+            //otherwise, get already processed POI list from memory
+            val poiString = sharedPref.getString(POI_LIST, null)
+            if(poiString == null) {
+                Toast.makeText(this, "Error getting POI list from storage!", Toast.LENGTH_SHORT).show()
+            } else {
+                val listType = object : TypeToken<MutableList<POIExpanded>>() {}.type
+                poiList = Gson().fromJson(poiString, listType)
+            }
+
+            if(poiList.isEmpty()) {
+                Toast.makeText(this, "Error getting POI list from storage!", Toast.LENGTH_SHORT).show()
+            } else {
+                //todo reset geofencing
+            }
         }
     }
 
@@ -37,7 +60,7 @@ class MainActivity : AppCompatActivity() {
     //[IDEA:] generate custom areas depending on distance instead of relying on predefined regions
     private fun processPOIs() {
         //todo bin each location to a larger location (city) on first launch
-        val poiList = mutableListOf<POIExpanded>()
+        poiList = mutableListOf()
 
         val observable = Observable.just(POIList.values)
             .subscribeOn(Schedulers.io())
@@ -62,9 +85,12 @@ class MainActivity : AppCompatActivity() {
                 //set first launch flag to prevent reprocessing the list
                 val sharedPref = getPreferences(Context.MODE_PRIVATE).edit()
                 sharedPref.putBoolean(FIRST_LAUNCH, false)
-                sharedPref.apply()
 
-                //todo save POI list to storage
+                //save POI list to storage
+                //todo use Room for this instead
+                sharedPref.putString(POI_LIST, Gson().toJson(poiList))
+
+                sharedPref.apply()
 
                 //todo define geofencing
             }
