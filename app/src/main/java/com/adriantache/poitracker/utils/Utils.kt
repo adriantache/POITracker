@@ -3,7 +3,9 @@ package com.adriantache.poitracker.utils
 import android.location.Location
 import com.adriantache.poitracker.data.RegionList
 import com.adriantache.poitracker.models.City
+import com.adriantache.poitracker.models.Coordinates
 import com.adriantache.poitracker.models.POI
+import com.google.android.gms.location.GeofenceStatusCodes
 import kotlin.math.sqrt
 
 
@@ -59,6 +61,7 @@ object Utils {
         return location1.distanceTo(location2)
     }
 
+    //get distance between to places in metres
     fun getDistance(location1: Location, lat: Double, long: Double): Float {
         val location2 = Location("")
         location2.latitude = lat
@@ -87,7 +90,7 @@ object Utils {
     }
 
     //order the list of locations by distance to current user location
-    fun getListByDistance(location: Location, list: List<City>): List<City> {
+    fun <T> getListByDistance(location: Location, list: List<T>): List<T> where T : Coordinates {
         val orderedList = list.sortedBy {
             getDistance(location, it.lat, it.long)
         }
@@ -97,6 +100,16 @@ object Utils {
             orderedList
         } else {
             orderedList.subList(0, 99)
+        }
+    }
+
+    //translate geofence errors into Strings
+    fun getGeofenceErrorString(errorCode: Int): String {
+        return when (errorCode) {
+            GeofenceStatusCodes.GEOFENCE_NOT_AVAILABLE -> return "Geofence not available!"
+            GeofenceStatusCodes.GEOFENCE_TOO_MANY_GEOFENCES -> return "Too many geofences!"
+            GeofenceStatusCodes.GEOFENCE_TOO_MANY_PENDING_INTENTS -> return "Too many pending intents!"
+            else -> "Unknown geofence error"
         }
     }
 }

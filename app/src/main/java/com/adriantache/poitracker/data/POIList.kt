@@ -11,6 +11,7 @@ object POIList {
      * city list is not empty
      * all POIs are inside a city
      * there are no duplicate POIs or names
+     * there are no POIs confusingly close to the city edge
      */
     val values = listOf(
         POI("Epicerie Delices", 46.206169, 6.132623, "Grocery"),

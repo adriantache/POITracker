@@ -8,12 +8,11 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.os.Build
 import android.os.Bundle
-import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.adriantache.poitracker.broadcastReceivers.CityGeofenceBroadcastReceiver
+import com.adriantache.poitracker.broadcastReceivers.GeofenceBroadcastReceiver
 import com.adriantache.poitracker.data.POIList
 import com.adriantache.poitracker.data.RegionList
 import com.adriantache.poitracker.models.City
@@ -39,6 +38,7 @@ import io.reactivex.schedulers.Schedulers
 
 private const val FIRST_LAUNCH = "first_launch"
 private const val POI_LIST = "poi_list"
+private const val POI_GEOFENCE_RADIUS = 200f
 
 class MainActivity : AppCompatActivity() {
     private val disposables = CompositeDisposable()
@@ -46,7 +46,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var poiList: MutableList<POIExpanded>
 
     private val geofencePendingIntent: PendingIntent by lazy {
-        val intent = Intent(this, CityGeofenceBroadcastReceiver::class.java)
+        val intent = Intent(this, GeofenceBroadcastReceiver::class.java)
         // We use FLAG_UPDATE_CURRENT so that we get the same pending intent back when calling
         // addGeofences() and removeGeofences().
         PendingIntent.getBroadcast(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT)
@@ -169,12 +169,9 @@ class MainActivity : AppCompatActivity() {
 
     //set up geofencing to notify the user based on the defined POIs
     private fun setUpGeofencing(userLocation: Location) {
-        Log.d("TAG", userLocation.toString() + poiList.toString())
-
         val city = isInsideCity(userLocation)
 
-        //todo remove these
-        Log.d("TAG", city.toString())
+        //todo remove this
         setUpCityGeofences(userLocation)
 
         if (city == null) {
@@ -219,7 +216,7 @@ class MainActivity : AppCompatActivity() {
 
                 geofenceList.add(
                     Geofence.Builder()
-                        .setRequestId(city.name)
+                        .setRequestId("CITY_${city.name}")
                         //loitering delay to prevent triggering geofence enter/exit events prematurely
                         //todo tweak this value
 //                        .setLoiteringDelay(1000 * 30)
@@ -248,21 +245,21 @@ class MainActivity : AppCompatActivity() {
                     addOnSuccessListener {
                         Toast.makeText(
                             this@MainActivity,
-                            "Geofences successfully added!",
+                            "City geofences successfully added!",
                             Toast.LENGTH_SHORT
                         ).show()
                     }
                     addOnFailureListener {
                         Toast.makeText(
                             this@MainActivity,
-                            "Geofences could not be added!",
+                            "City geofences could not be added!",
                             Toast.LENGTH_SHORT
                         ).show()
                     }
                 }
             }
         }, { error ->
-            Toast.makeText(this, "Error setting up geofences!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Error setting up city geofences!", Toast.LENGTH_SHORT).show()
             error.printStackTrace()
         })
     }
@@ -270,6 +267,69 @@ class MainActivity : AppCompatActivity() {
     private fun setUpPoiGeofences(userLocation: Location) {
         geofencingClient = LocationServices.getGeofencingClient(this)
 
+        val observable = Single.create<List<POIExpanded>> {
+            //get the list as ordered by distance
+            val orderedList = getListByDistance(userLocation, poiList)
+
+            if (orderedList.isNotEmpty()) {
+                it.onSuccess(orderedList)
+            } else {
+                throw IllegalArgumentException("Error sorting list by distance.")
+            }
+        }.subscribeOn(Schedulers.io())
+            .observeOn(AndroidSchedulers.mainThread())
+
+        disposables += observable.subscribe({
+            val geofenceList = mutableListOf<Geofence>()
+
+            it.forEach { poi ->
+                geofenceList.add(
+                    Geofence.Builder()
+                        .setRequestId("POI_${poi.name}") //again assuming names are unique
+                        //loitering delay to prevent triggering geofence enter/exit events prematurely
+                        //todo tweak this value
+//                        .setLoiteringDelay(1000 * 30)
+                        //todo tweak or automate this value
+                        .setNotificationResponsiveness(5 * 60 * 1000)
+                        .setExpirationDuration(NEVER_EXPIRE)
+                        .setCircularRegion(
+                            poi.lat,
+                            poi.long,
+                            POI_GEOFENCE_RADIUS
+                        )
+                        .setTransitionTypes(
+                            Geofence.GEOFENCE_TRANSITION_ENTER or
+                                    Geofence.GEOFENCE_TRANSITION_EXIT
+                        )
+                        .build()
+                )
+
+                val geofencingRequest = GeofencingRequest.Builder().apply {
+                    setInitialTrigger(GeofencingRequest.INITIAL_TRIGGER_ENTER) //todo change this to dwell eventually
+                        .addGeofences(geofenceList)
+                }.build()
+
+                geofencingClient.addGeofences(geofencingRequest, geofencePendingIntent)?.run {
+                    addOnSuccessListener {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "POI geofences successfully added!",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                    addOnFailureListener {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "POI geofences could not be added!",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            }
+        }, { error ->
+            Toast.makeText(this, "Error setting up POI geofences!", Toast.LENGTH_SHORT).show()
+            error.printStackTrace()
+        })
     }
 
     override fun onDestroy() {
