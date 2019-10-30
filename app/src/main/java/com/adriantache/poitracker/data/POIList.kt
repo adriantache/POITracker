@@ -4,6 +4,12 @@ import android.location.Location
 import com.adriantache.poitracker.models.POI
 
 object POIList {
+    /**
+     * making assumptions:
+     * city list is not empty
+     * all POIs are inside a city
+     * there are no duplicate POIs or names
+     */
     val values: List<POI>
 
     init {
