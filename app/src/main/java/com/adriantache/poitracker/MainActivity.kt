@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -29,6 +30,7 @@ private const val POI_LIST = "poi_list"
 
 class MainActivity : AppCompatActivity() {
     private val disposables = CompositeDisposable()
+    private lateinit var poiList: MutableList<POIExpanded>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -51,15 +53,20 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Error getting POI list from storage!", Toast.LENGTH_SHORT)
                     .show()
             } else {
-                val listType = object : TypeToken<List<POIExpanded>>() {}.type
-                val poiList: List<POIExpanded> = Gson().fromJson(poiString, listType)
+                val listType = object : TypeToken<MutableList<POIExpanded>>() {}.type
+                poiList = Gson().fromJson(poiString, listType)
 
                 if (poiList.isEmpty()) {
                     Toast.makeText(this, "Error getting POI list from storage!", Toast.LENGTH_SHORT)
                         .show()
                 } else {
-                    //todo reset geofencing
-                    getUserLocation(poiList)
+                    //reset geofencing
+                    //ensure we have necessary permissions before requesting location
+                    if (!checkLocationPermissions()) {
+                        requestLocationPermissions()
+                    } else {
+                        getUserLocation()
+                    }
                 }
             }
         }
@@ -74,14 +81,15 @@ class MainActivity : AppCompatActivity() {
             .observeOn(AndroidSchedulers.mainThread())
 
         disposables += observable.subscribe({
-            val poiList = mutableListOf<POIExpanded>()
+            poiList = mutableListOf()
 
             for (poi in it) {
                 val (city, distance) = getCity(poi)
 
                 val generatedPoi = POIExpanded(
                     poi.name,
-                    poi.location,
+                    poi.lat,
+                    poi.long,
                     poi.category,
                     city,
                     distance
@@ -97,12 +105,14 @@ class MainActivity : AppCompatActivity() {
 
                 //save POI list to storage
                 //todo use Room for this instead
-                sharedPref.putString(POI_LIST, Gson().toJson(poiList.toList()))
+                sharedPref.putString(POI_LIST, Gson().toJson(poiList))
 
                 sharedPref.apply()
 
-                //todo define geofencing
-                getUserLocation(poiList)
+                //ensure we have necessary permissions before requesting location
+                if (!checkLocationPermissions()) {
+                    requestLocationPermissions()
+                } else getUserLocation()
             }
         }, { error ->
             Toast.makeText(this, "Error creating expanded POI list!", Toast.LENGTH_SHORT).show()
@@ -111,10 +121,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     //get the current location of the user to determine geofencing strategy (city or POI level)
-    private fun getUserLocation(poiList: List<POIExpanded>) {
-        //ensure we have necessary permissions before requesting location
-        checkPermissions()
-
+    private fun getUserLocation() {
         //get user location
         val fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
@@ -126,10 +133,11 @@ class MainActivity : AppCompatActivity() {
             fusedLocationClient.lastLocation.addOnFailureListener { error ->
                 it.onError(error)
             }
-        }
+        }.subscribeOn(Schedulers.io())
+            .observeOn(AndroidSchedulers.mainThread())
 
         disposables += observable.subscribe({
-            setUpGeofencing(it, poiList)
+            setUpGeofencing(it)
         }, { error ->
             Toast.makeText(this, "Error getting user location!", Toast.LENGTH_SHORT).show()
             error.printStackTrace()
@@ -137,8 +145,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     //set up geofencing to notify the user based on the defined POIs
-    private fun setUpGeofencing(userLocation: Location, poiList: List<POIExpanded>) {
-        TODO()
+    private fun setUpGeofencing(userLocation: Location) {
+        Log.d("TAG", userLocation.toString() + poiList.toString())
 
         //if user is outside city, setup city geofences based on flight time to nearest city
         //use rx
@@ -146,35 +154,61 @@ class MainActivity : AppCompatActivity() {
         //if user is within city, setup location geofences based on distance to nearest POI
     }
 
-
     override fun onDestroy() {
         super.onDestroy()
         disposables.clear()
     }
 
-    //ensure the app has required location permissions
-    private fun checkPermissions() {
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        getUserLocation()
+    }
+
+    private fun checkLocationPermissions(): Boolean {
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED ||
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_BACKGROUND_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) return false
+
+        return true
+    }
+
+    private fun requestLocationPermissions() {
         if (ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.ACCESS_FINE_LOCATION
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-            Toast.makeText(this, "Missing foreground location permission!", Toast.LENGTH_SHORT)
-                .show()
-
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
-                1
-            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(
+                        Manifest.permission.ACCESS_FINE_LOCATION,
+                        Manifest.permission.ACCESS_BACKGROUND_LOCATION
+                    ),
+                    1
+                )
+            } else {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
+                    1
+                )
+            }
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.ACCESS_BACKGROUND_LOCATION
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-            Toast.makeText(this, "Missing background location permission!", Toast.LENGTH_SHORT)
-                .show()
-
             ActivityCompat.requestPermissions(
                 this,
                 arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION),

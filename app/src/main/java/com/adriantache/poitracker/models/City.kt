@@ -1,9 +1,8 @@
 package com.adriantache.poitracker.models
 
-import android.location.Location
-
 data class City(
     val name: String,
-    val location: Location,
+    val lat: Double,
+    val long: Double,
     val areaKm2: Int
 )
