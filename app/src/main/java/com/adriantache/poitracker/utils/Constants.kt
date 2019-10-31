@@ -4,6 +4,7 @@ object Constants {
     //MainActivity constants
     const val FIRST_LAUNCH = "first_launch"
     const val POI_LIST = "poi_list"
+    const val SHARED_PREFS = "myPrefs"
 
     //constants for Geofencing
     const val POI_GEOFENCE_RADIUS = 200f

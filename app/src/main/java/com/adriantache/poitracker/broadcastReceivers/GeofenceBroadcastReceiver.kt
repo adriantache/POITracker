@@ -12,13 +12,18 @@ import android.content.Context
 import android.content.Context.NOTIFICATION_SERVICE
 import android.content.Intent
 import android.util.Log
+import android.widget.Toast
 import com.adriantache.poitracker.MainActivity
 import com.adriantache.poitracker.R
+import com.adriantache.poitracker.data.RegionList
+import com.adriantache.poitracker.models.City
+import com.adriantache.poitracker.models.POIExpanded
 import com.adriantache.poitracker.utils.Constants.CITY_LABEL
 import com.adriantache.poitracker.utils.Constants.NOTIFICATION_CHANNEL_CITY
 import com.adriantache.poitracker.utils.Constants.NOTIFICATION_CHANNEL_POI
 import com.adriantache.poitracker.utils.Constants.POI_LABEL
 import com.adriantache.poitracker.utils.Utils.getGeofenceErrorString
+import com.adriantache.poitracker.utils.Utils.loadPOIList
 import com.google.android.gms.location.Geofence
 import com.google.android.gms.location.GeofencingEvent
 import com.google.android.gms.location.LocationServices
@@ -98,10 +103,12 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
             observable.subscribe({
                 val labels = it.requestId.split('_')
 
-                if (labels.size < 2) Log.e(TAG, "Geofence tag error! ${it.requestId} => $labels")
+                if (labels.size < 2) {
+                    Log.e(TAG, "Geofence tag parsing error! ${it.requestId} => $labels")
+                }
 
                 val type = labels[0]
-                val name = labels[1]
+                val id: Int = labels[1].toInt()
 
                 //initialize notification manager
                 notificationManager =
@@ -109,9 +116,12 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
 
                 if (type == CITY_LABEL) {
                     if (geofenceTransition == Geofence.GEOFENCE_TRANSITION_ENTER) {
+                        //get city from ID
+                        val city = RegionList.cities[id - 1]
+
                         //todo add logic for entering city
                         //trigger city notification
-                        triggerCityNotification(name, context)
+                        triggerCityNotification(city, context)
                         //remove all city geofences
                         //add POI geofences
                         //add current city exit geofence
@@ -119,7 +129,7 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
                     } else if (geofenceTransition == Geofence.GEOFENCE_TRANSITION_EXIT) {
                         //todo add logic for exiting city
                         //dismiss city notification
-                        dismissCityNotification()
+                        dismissCityNotification(id)
                         //dismiss POI notification
                         //remove all POI geofences
                         //add city geofences
@@ -127,23 +137,35 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
                     }
                 } else if (type == POI_LABEL) {
                     if (geofenceTransition == Geofence.GEOFENCE_TRANSITION_ENTER) {
+                        val poiList = loadPOIList(context)
+                        if (poiList.isEmpty()) {
+                            Toast.makeText(
+                                context,
+                                "Error getting POI list from storage!",
+                                Toast.LENGTH_SHORT
+                            )
+                                .show()
+                            return@subscribe
+                        }
+                        val poi = poiList[id - 1]
+
                         //todo add logic for entering POI
                         //trigger POI notification
-                        triggerPOINotification(name, context)
+                        triggerPOINotification(poi, context)
 
                     } else if (geofenceTransition == Geofence.GEOFENCE_TRANSITION_EXIT) {
                         //todo add logic for exiting POI
                         //dismiss POI notification
-                        dismissPOINotification()
+                        dismissPOINotification(id)
                     }
                 }
             }, { error -> error.printStackTrace() })
         )
     }
 
-    private fun triggerCityNotification(name: String, context: Context) {
+    private fun triggerCityNotification(city: City, context: Context) {
         val notificationTitle = "POITracker: Entered city."
-        val notificationText = "Welcome to $name! There are POI in this city."
+        val notificationText = "Welcome to ${city.name}! There are POI in this city."
 
         buildCityNotificationChannel()
 
@@ -152,7 +174,7 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
         //put together the PendingIntent
         val pendingIntent = PendingIntent.getActivity(
             context,
-            10, //todo add city ID here
+            10 + city.id,
             intent,
             //updating current notification if it exists in order to prevent showing the same notification twice
             FLAG_UPDATE_CURRENT
@@ -174,7 +196,7 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
         //trigger the notification
         //we give each notification the ID of the city,
         //to ensure they all show up and there are no duplicates
-        notificationManager.notify(10, notificationBuilder.build()) //todo add city ID here
+        notificationManager.notify(10 + city.id, notificationBuilder.build())
     }
 
     private fun buildCityNotificationChannel() {
@@ -199,13 +221,13 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
         notificationManager.createNotificationChannel(newChannel)
     }
 
-    private fun dismissCityNotification(id: Int = 0) {
+    private fun dismissCityNotification(id: Int) {
         notificationManager.cancel(10 + id)
     }
 
-    private fun triggerPOINotification(name: String, context: Context) {
+    private fun triggerPOINotification(poi: POIExpanded, context: Context) {
         val notificationTitle = "POITracker: Near POI."
-        val notificationText = "Welcome to $name!"
+        val notificationText = "Welcome to ${poi.name} (${poi.category})!"
 
         buildPOINotificationChannel()
 
@@ -214,7 +236,7 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
         //put together the PendingIntent
         val pendingIntent = PendingIntent.getActivity(
             context,
-            1000, //todo add POI ID here
+            1000 + poi.id,
             intent,
             //updating current notification if it exists in order to prevent showing the same notification twice
             FLAG_UPDATE_CURRENT
@@ -236,7 +258,7 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
         //trigger the notification
         //we give each notification the ID of the city,
         //to ensure they all show up and there are no duplicates
-        notificationManager.notify(1000, notificationBuilder.build()) //todo add POI ID here
+        notificationManager.notify(1000 + poi.id, notificationBuilder.build())
     }
 
     private fun buildPOINotificationChannel() {
@@ -261,7 +283,7 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
         notificationManager.createNotificationChannel(newChannel)
     }
 
-    private fun dismissPOINotification(id: Int = 0) {
+    private fun dismissPOINotification(id: Int) {
         notificationManager.cancel(1000 + id)
     }
 

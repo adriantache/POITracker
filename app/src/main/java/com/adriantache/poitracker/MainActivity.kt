@@ -22,18 +22,19 @@ import com.adriantache.poitracker.utils.Constants.FIRST_LAUNCH
 import com.adriantache.poitracker.utils.Constants.POI_GEOFENCE_RADIUS
 import com.adriantache.poitracker.utils.Constants.POI_LABEL
 import com.adriantache.poitracker.utils.Constants.POI_LIST
+import com.adriantache.poitracker.utils.Constants.SHARED_PREFS
 import com.adriantache.poitracker.utils.Utils
 import com.adriantache.poitracker.utils.Utils.getCity
 import com.adriantache.poitracker.utils.Utils.getListByDistance
 import com.adriantache.poitracker.utils.Utils.getRadius
 import com.adriantache.poitracker.utils.Utils.isInsideCity
+import com.adriantache.poitracker.utils.Utils.loadPOIList
 import com.google.android.gms.location.Geofence
 import com.google.android.gms.location.Geofence.NEVER_EXPIRE
 import com.google.android.gms.location.GeofencingClient
 import com.google.android.gms.location.GeofencingRequest
 import com.google.android.gms.location.LocationServices
 import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
 import io.reactivex.Single
 import io.reactivex.android.schedulers.AndroidSchedulers
 import io.reactivex.disposables.CompositeDisposable
@@ -44,7 +45,7 @@ import io.reactivex.schedulers.Schedulers
 class MainActivity : AppCompatActivity() {
     private val disposables = CompositeDisposable()
     private lateinit var geofencingClient: GeofencingClient
-    private lateinit var poiList: MutableList<POIExpanded>
+    private lateinit var poiList: List<POIExpanded>
 
     private val geofencePendingIntent: PendingIntent by lazy {
         val intent = Intent(this, GeofenceBroadcastReceiver::class.java)
@@ -63,31 +64,23 @@ class MainActivity : AppCompatActivity() {
     private fun getPoiList() {
         //if this is the first launch, process the POI list
         //[assumption]: no new POIs are ever added since we are offline
-        val sharedPref = getPreferences(Context.MODE_PRIVATE)
+        val sharedPref = getSharedPreferences(SHARED_PREFS, Context.MODE_PRIVATE)
         val firstLaunch = sharedPref.getBoolean(FIRST_LAUNCH, true)
         if (firstLaunch) {
             processPOIs()
         } else {
-            //otherwise, get already processed POI list from memory
-            val poiString = sharedPref.getString(POI_LIST, null)
-            if (poiString == null) {
+            poiList = loadPOIList(this)
+
+            if (poiList.isEmpty()) {
                 Toast.makeText(this, "Error getting POI list from storage!", Toast.LENGTH_SHORT)
                     .show()
             } else {
-                val listType = object : TypeToken<MutableList<POIExpanded>>() {}.type
-                poiList = Gson().fromJson(poiString, listType)
-
-                if (poiList.isEmpty()) {
-                    Toast.makeText(this, "Error getting POI list from storage!", Toast.LENGTH_SHORT)
-                        .show()
+                //reset geofencing
+                //ensure we have necessary permissions before requesting location
+                if (!checkLocationPermissions()) {
+                    requestLocationPermissions()
                 } else {
-                    //reset geofencing
-                    //ensure we have necessary permissions before requesting location
-                    if (!checkLocationPermissions()) {
-                        requestLocationPermissions()
-                    } else {
-                        getUserLocation()
-                    }
+                    getUserLocation()
                 }
             }
         }
@@ -102,12 +95,13 @@ class MainActivity : AppCompatActivity() {
             .observeOn(AndroidSchedulers.mainThread())
 
         disposables += observable.subscribe({
-            poiList = mutableListOf()
+            val tempList = mutableListOf<POIExpanded>()
 
-            for (poi in it) {
+            it.forEachIndexed { index, poi ->
                 val (city, distance) = getCity(poi)
 
                 val generatedPoi = POIExpanded(
+                    index + 1,
                     poi.name,
                     poi.lat,
                     poi.long,
@@ -116,16 +110,18 @@ class MainActivity : AppCompatActivity() {
                     distance
                 )
 
-                poiList.add(generatedPoi)
+                tempList.add(generatedPoi)
             }
 
-            if (poiList.isNotEmpty()) {
+            if (tempList.isNotEmpty()) {
+                poiList = tempList.toList()
+
                 //set first launch flag to prevent reprocessing the list
-                val sharedPref = getPreferences(Context.MODE_PRIVATE).edit()
+                val sharedPref = getSharedPreferences(SHARED_PREFS, Context.MODE_PRIVATE).edit()
                 sharedPref.putBoolean(FIRST_LAUNCH, false)
 
                 //save POI list to storage
-                //todo use Room for this instead
+                //todo use Room for this instead, eventually
                 sharedPref.putString(POI_LIST, Gson().toJson(poiList))
 
                 sharedPref.apply()
@@ -135,10 +131,11 @@ class MainActivity : AppCompatActivity() {
                     requestLocationPermissions()
                 } else getUserLocation()
             }
-        }, { error ->
-            Toast.makeText(this, "Error creating expanded POI list!", Toast.LENGTH_SHORT).show()
-            error.printStackTrace()
-        })
+        },
+            { error ->
+                Toast.makeText(this, "Error creating expanded POI list!", Toast.LENGTH_SHORT).show()
+                error.printStackTrace()
+            })
     }
 
     //get the current location of the user to determine geofencing strategy (city or POI level)
@@ -215,7 +212,7 @@ class MainActivity : AppCompatActivity() {
 
                 geofenceList.add(
                     Geofence.Builder()
-                        .setRequestId("${CITY_LABEL}_${city.name}")
+                        .setRequestId("${CITY_LABEL}_${city.id}")
                         //loitering delay to prevent triggering geofence enter/exit events prematurely
                         //todo tweak this value
 //                        .setLoiteringDelay(1000 * 30)
@@ -284,7 +281,7 @@ class MainActivity : AppCompatActivity() {
             it.forEach { poi ->
                 geofenceList.add(
                     Geofence.Builder()
-                        .setRequestId("${POI_LABEL}_${poi.name}") //again assuming names are unique
+                        .setRequestId("${POI_LABEL}_${poi.id}") //again assuming names are unique
                         //loitering delay to prevent triggering geofence enter/exit events prematurely
                         //todo tweak this value
 //                        .setLoiteringDelay(1000 * 30)

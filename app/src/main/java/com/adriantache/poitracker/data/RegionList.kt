@@ -9,7 +9,7 @@ import com.adriantache.poitracker.models.City
 
 object RegionList {
     val cities = listOf(
-        City("Geneva", 46.2, 6.15, 16),
-        City("Lausanne", 46.519833, 6.6335, 42)
+        City(1, "Geneva", 46.2, 6.15, 16),
+        City(2, "Lausanne", 46.519833, 6.6335, 42)
     )
 }
