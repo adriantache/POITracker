@@ -176,7 +176,7 @@ class MainActivity : AppCompatActivity() {
             setUpCityGeofences(userLocation)
         } else {
             //if user is within city, setup location geofences based on distance to nearest POI
-            setUpPoiGeofences(userLocation)
+            setUpPoiGeofences(userLocation, city.name)
         }
     }
 
@@ -260,12 +260,17 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    private fun setUpPoiGeofences(userLocation: Location) {
+    private fun setUpPoiGeofences(userLocation: Location, cityName: String) {
         geofencingClient = LocationServices.getGeofencingClient(this)
 
         val observable = Single.create<List<POIExpanded>> {
+            //only accept POIs from that city
+            val filteredList = poiList.filter { poi ->
+                poi.city.name == cityName
+            }
+
             //get the list as ordered by distance
-            val orderedList = getListByDistance(userLocation, poiList)
+            val orderedList = getListByDistance(userLocation, filteredList)
 
             if (orderedList.isNotEmpty()) {
                 it.onSuccess(orderedList)
