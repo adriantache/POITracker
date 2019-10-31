@@ -125,4 +125,34 @@ object Utils {
 
         return poiList
     }
+
+    //generate String to update UI based on current position
+    fun generatePoiString(location: Location, poiList: List<POIExpanded>): String {
+        var string = ""
+
+        val city = isInsideCity(location)
+
+        string += if (city == null) "You are not inside a city."
+        else "Welcome to ${city.name}."
+
+        string += "\n\n"
+
+        var tempList = if (city == null) poiList
+        else {
+            poiList.filter { it.city.name == city.name }
+        }
+
+        tempList = getListByDistance(location, tempList)
+
+        if (tempList.isNotEmpty()) {
+            tempList
+                .forEach {
+                    val distance = getDistance(location, it.lat, it.long).toInt()
+
+                    string += "Distance to ${it.name} (${it.category}): $distance metres. \n"
+                }
+        }
+
+        return string
+    }
 }

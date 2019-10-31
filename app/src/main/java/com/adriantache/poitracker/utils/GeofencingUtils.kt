@@ -25,6 +25,7 @@ object GeofencingUtils {
     //todo [IMPORTANT] dispose of observers
     private val disposables = CompositeDisposable()
 
+    //get the general pending intent that registers the BroadcastReceiver to listen to Geofence events
     fun getPendingIntent(context: Context): PendingIntent? {
         val intent = Intent(context, GeofenceBroadcastReceiver::class.java)
         // We use FLAG_UPDATE_CURRENT so that we get the same pending intent back when calling
@@ -32,6 +33,7 @@ object GeofencingUtils {
         return PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
+    //add geofences for POIs
     fun addPOIGeofences(
         cityName: String,
         poiList: List<POIExpanded>,
@@ -105,6 +107,7 @@ object GeofencingUtils {
         })
     }
 
+    //add geofences for cities
     fun addCityGeofences(
         context: Context,
         userLocation: Location? = null

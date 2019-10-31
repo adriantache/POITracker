@@ -128,7 +128,6 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
                         //get city from ID
                         val city = RegionList.cities[id - 1]
 
-                        //todo add logic for entering city
                         //trigger city notification
                         triggerCityNotification(city, context)
                         //remove all city geofences
@@ -139,7 +138,6 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
                     } else if (geofenceTransition == Geofence.GEOFENCE_TRANSITION_EXIT) {
                         Log.i(TAG, "Exited city (id = $id)")
 
-                        //todo add logic for exiting city
                         //dismiss city notification
                         //dismiss POI notification
                         dismissAllNotifications()
@@ -230,10 +228,6 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
         notificationManager.createNotificationChannel(newChannel)
     }
 
-    private fun dismissCityNotification(id: Int) {
-        notificationManager.cancel(10 + id)
-    }
-
     private fun dismissAllNotifications() {
         notificationManager.cancelAll()
     }
@@ -300,29 +294,7 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
         notificationManager.cancel(1000 + id)
     }
 
-    private fun getGeofenceTransitionDetails(
-        geofenceTransition: Int,
-        triggeringGeofences: List<Geofence>
-    ): String {
-        var resultString = ""
-
-        resultString += when (geofenceTransition) {
-            Geofence.GEOFENCE_TRANSITION_ENTER -> "Entered geofence area(s):"
-            Geofence.GEOFENCE_TRANSITION_EXIT -> "Exited geofence area(s):"
-            Geofence.GEOFENCE_TRANSITION_DWELL -> "Dwelling in geofence area(s):"
-            else -> "Unknown transition $geofenceTransition!"
-        }
-
-        resultString += "\n"
-
-        triggeringGeofences.forEach {
-            resultString += it.requestId
-            resultString += "\n"
-        }
-
-        return resultString
-    }
-
+    //remove all geofences, then add current city geofence and geofence for all POI in that city
     private fun removeGeofences(context: Context, city: City) {
         val completable = Completable.create { completable ->
             val geofencingClient = LocationServices.getGeofencingClient(context)
@@ -352,6 +324,7 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
         )
     }
 
+    //remove all geofences, then add all cities geofences
     private fun removeGeofences(context: Context) {
         val completable = Completable.create { completable ->
             val geofencingClient = LocationServices.getGeofencingClient(context)
@@ -415,7 +388,7 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
 
                             val poiList = loadPOIList(context)
                             if (poiList.isEmpty()) {
-                                Log.e(TAG, "Cannot fetch POI list!")
+                                Log.e(TAG, "Current city geofence could not be added!")
                             } else {
                                 //add city level geofences
                                 addPOIGeofences(city.name, poiList, context)
@@ -423,14 +396,38 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
                         }
                         addOnFailureListener {
                             Log.e(TAG, "Current city geofence could not be added!")
+                            it.printStackTrace()
                         }
                     }
             },
                 { error ->
-                    Toast.makeText(context, "Error setting up city geofence!", Toast.LENGTH_SHORT)
-                        .show()
+                    Log.e(TAG, "Cannot fetch POI list!")
                     error.printStackTrace()
                 })
         )
+    }
+
+    //todo using this for debugging, should be removed eventually
+    private fun getGeofenceTransitionDetails(
+        geofenceTransition: Int,
+        triggeringGeofences: List<Geofence>
+    ): String {
+        var resultString = ""
+
+        resultString += when (geofenceTransition) {
+            Geofence.GEOFENCE_TRANSITION_ENTER -> "Entered geofence area(s):"
+            Geofence.GEOFENCE_TRANSITION_EXIT -> "Exited geofence area(s):"
+            Geofence.GEOFENCE_TRANSITION_DWELL -> "Dwelling in geofence area(s):"
+            else -> "Unknown transition $geofenceTransition!"
+        }
+
+        resultString += "\n"
+
+        triggeringGeofences.forEach {
+            resultString += it.requestId
+            resultString += "\n"
+        }
+
+        return resultString
     }
 }

@@ -1,9 +1,7 @@
 package com.adriantache.poitracker
 
 import android.Manifest
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
 import android.os.Build
@@ -12,18 +10,23 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.adriantache.poitracker.broadcastReceivers.GeofenceBroadcastReceiver
+import androidx.databinding.DataBindingUtil
 import com.adriantache.poitracker.data.POIList
+import com.adriantache.poitracker.databinding.ActivityMainBinding
 import com.adriantache.poitracker.models.POIExpanded
 import com.adriantache.poitracker.utils.Constants.FIRST_LAUNCH
 import com.adriantache.poitracker.utils.Constants.POI_LIST
 import com.adriantache.poitracker.utils.Constants.SHARED_PREFS
 import com.adriantache.poitracker.utils.GeofencingUtils.addCityGeofences
 import com.adriantache.poitracker.utils.GeofencingUtils.addPOIGeofences
+import com.adriantache.poitracker.utils.Utils.generatePoiString
 import com.adriantache.poitracker.utils.Utils.getCity
 import com.adriantache.poitracker.utils.Utils.isInsideCity
 import com.adriantache.poitracker.utils.Utils.loadPOIList
-import com.google.android.gms.location.GeofencingClient
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationRequest.PRIORITY_HIGH_ACCURACY
+import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.gson.Gson
 import io.reactivex.Single
@@ -38,10 +41,25 @@ import io.reactivex.schedulers.Schedulers
 class MainActivity : AppCompatActivity() {
     private val disposables = CompositeDisposable()
     private lateinit var poiList: List<POIExpanded>
+    private lateinit var binding: ActivityMainBinding
+
+    private val locationCallback: LocationCallback by lazy {
+        object : LocationCallback() {
+            override fun onLocationResult(locationResult: LocationResult?) {
+                super.onLocationResult(locationResult)
+                val location = locationResult?.lastLocation
+                if (location != null) updateUI(location)
+            }
+        }
+    }
+
+    private val fusedLocationClient by lazy {
+        LocationServices.getFusedLocationProviderClient(this)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
+        binding = DataBindingUtil.setContentView(this, R.layout.activity_main)
 
         getPoiList()
     }
@@ -141,7 +159,10 @@ class MainActivity : AppCompatActivity() {
             .observeOn(AndroidSchedulers.mainThread())
 
         disposables += observable.subscribe({
+            //build geofences for the background
             setUpGeofencing(it)
+            //and begin high-accuracy monitoring in the foreground
+            beginMonitoringLocation()
         }, { error ->
             Toast.makeText(this, "Error getting user location!", Toast.LENGTH_SHORT).show()
             error.printStackTrace()
@@ -157,25 +178,36 @@ class MainActivity : AppCompatActivity() {
 
         if (city == null) {
             //if user is outside city, setup city geofences based on flight time to nearest city
-            //use rx
-            setUpCityGeofences(userLocation)
+            addCityGeofences(this, userLocation)
         } else {
             //if user is within city, setup location geofences based on distance to nearest POI
-            setUpPoiGeofences(userLocation, city.name)
+            addPOIGeofences(city.name, poiList, this, userLocation)
         }
     }
 
-    private fun setUpCityGeofences(userLocation: Location) {
-        addCityGeofences(this, userLocation)
+    private fun beginMonitoringLocation() {
+        val locationRequest = LocationRequest().apply {
+            interval = 10000
+            fastestInterval = 5000
+            priority = PRIORITY_HIGH_ACCURACY
+        }
+
+
+        fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, null)
     }
 
-    private fun setUpPoiGeofences(userLocation: Location, cityName: String) {
-        addPOIGeofences(cityName, poiList, this, userLocation)
+    private fun updateUI(location: Location) {
+        val poiString = generatePoiString(location, poiList)
+
+        binding.textView.text = poiString
     }
 
     override fun onDestroy() {
         super.onDestroy()
         disposables.clear()
+
+        //stop location tracking
+        fusedLocationClient.removeLocationUpdates(locationCallback)
     }
 
     override fun onRequestPermissionsResult(
