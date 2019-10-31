@@ -22,12 +22,19 @@ import com.adriantache.poitracker.utils.Constants.CITY_LABEL
 import com.adriantache.poitracker.utils.Constants.NOTIFICATION_CHANNEL_CITY
 import com.adriantache.poitracker.utils.Constants.NOTIFICATION_CHANNEL_POI
 import com.adriantache.poitracker.utils.Constants.POI_LABEL
+import com.adriantache.poitracker.utils.GeofencingUtils.addCityGeofences
+import com.adriantache.poitracker.utils.GeofencingUtils.addPOIGeofences
+import com.adriantache.poitracker.utils.GeofencingUtils.getPendingIntent
+import com.adriantache.poitracker.utils.Utils
 import com.adriantache.poitracker.utils.Utils.getGeofenceErrorString
 import com.adriantache.poitracker.utils.Utils.loadPOIList
 import com.google.android.gms.location.Geofence
 import com.google.android.gms.location.GeofencingEvent
+import com.google.android.gms.location.GeofencingRequest
 import com.google.android.gms.location.LocationServices
+import io.reactivex.Completable
 import io.reactivex.Observable
+import io.reactivex.Single
 import io.reactivex.android.schedulers.AndroidSchedulers
 import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.schedulers.Schedulers
@@ -64,9 +71,9 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
             val triggeringGeofences = geofencingEvent.triggeringGeofences
 
             //process each event individually
-            if (context != null) {
+            if (context != null && intent != null) {
                 consumeEvents(geofenceTransition, triggeringGeofences, context)
-            } else Log.e(TAG, "Error getting context!")
+            } else Log.e(TAG, "Error getting context or intent!")
 
             // Get the transition details as a String.
             val geofenceTransitionDetails = getGeofenceTransitionDetails(
@@ -116,6 +123,8 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
 
                 if (type == CITY_LABEL) {
                     if (geofenceTransition == Geofence.GEOFENCE_TRANSITION_ENTER) {
+                        Log.i(TAG, "Entered city (id = $id)")
+
                         //get city from ID
                         val city = RegionList.cities[id - 1]
 
@@ -123,38 +132,38 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
                         //trigger city notification
                         triggerCityNotification(city, context)
                         //remove all city geofences
-                        //add POI geofences
                         //add current city exit geofence
+                        //add POI geofences
+                        removeGeofences(context, city)
 
                     } else if (geofenceTransition == Geofence.GEOFENCE_TRANSITION_EXIT) {
+                        Log.i(TAG, "Exited city (id = $id)")
+
                         //todo add logic for exiting city
                         //dismiss city notification
-                        dismissCityNotification(id)
                         //dismiss POI notification
+                        dismissAllNotifications()
                         //remove all POI geofences
                         //add city geofences
-
+                        removeGeofences(context)
                     }
                 } else if (type == POI_LABEL) {
                     if (geofenceTransition == Geofence.GEOFENCE_TRANSITION_ENTER) {
+                        Log.i(TAG, "Entered POI (id = $id)")
+
                         val poiList = loadPOIList(context)
                         if (poiList.isEmpty()) {
-                            Toast.makeText(
-                                context,
-                                "Error getting POI list from storage!",
-                                Toast.LENGTH_SHORT
-                            )
-                                .show()
+                            Log.e(TAG, "Cannot fetch POI list!")
                             return@subscribe
                         }
+                        //todo refactor this to not depend on list position
                         val poi = poiList[id - 1]
 
-                        //todo add logic for entering POI
                         //trigger POI notification
                         triggerPOINotification(poi, context)
-
                     } else if (geofenceTransition == Geofence.GEOFENCE_TRANSITION_EXIT) {
-                        //todo add logic for exiting POI
+                        Log.i(TAG, "Exited POI (id = $id)")
+
                         //dismiss POI notification
                         dismissPOINotification(id)
                     }
@@ -223,6 +232,10 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
 
     private fun dismissCityNotification(id: Int) {
         notificationManager.cancel(10 + id)
+    }
+
+    private fun dismissAllNotifications() {
+        notificationManager.cancelAll()
     }
 
     private fun triggerPOINotification(poi: POIExpanded, context: Context) {
@@ -310,18 +323,114 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
         return resultString
     }
 
-    private fun removeGeofences(context: Context, intent: Intent) {
-        val geofencingClient = LocationServices.getGeofencingClient(context)
+    private fun removeGeofences(context: Context, city: City) {
+        val completable = Completable.create { completable ->
+            val geofencingClient = LocationServices.getGeofencingClient(context)
 
-        //todo move to rx
-//        geofencingClient?.removeGeofences(intent)?.run {
-//            addOnSuccessListener {
-//                // Geofences removed
-//                // ...
-//            }
-//            addOnFailureListener {
-//                // Failed to remove geofences
-//                // ...
-//            }
+            geofencingClient.removeGeofences(getPendingIntent(context)).run {
+                addOnSuccessListener {
+                    // Geofences removed
+                    completable.onComplete()
+                    Log.d(TAG, "Successfully removed city geofences.")
+                }
+                addOnFailureListener { e ->
+                    // Failed to remove geofences
+                    completable.onError(e)
+                }
+            }
+        }.subscribeOn(Schedulers.io())
+            .observeOn(AndroidSchedulers.mainThread())
+
+        disposables.add(
+            completable.subscribe({
+                //add current city exit geofence
+                addCityAndPOIGeofence(context, city)
+            },
+                { e ->
+                    e.printStackTrace()
+                })
+        )
+    }
+
+    private fun removeGeofences(context: Context) {
+        val completable = Completable.create { completable ->
+            val geofencingClient = LocationServices.getGeofencingClient(context)
+
+            geofencingClient.removeGeofences(getPendingIntent(context)).run {
+                addOnSuccessListener {
+                    // Geofences removed
+                    completable.onComplete()
+                    Log.d(TAG, "Successfully removed city geofences.")
+                }
+                addOnFailureListener { e ->
+                    // Failed to remove geofences
+                    completable.onError(e)
+                }
+            }
+        }.subscribeOn(Schedulers.io())
+            .observeOn(AndroidSchedulers.mainThread())
+
+        disposables.add(
+            completable.subscribe({
+                //add current city exit geofence
+                addCityGeofences(context)
+            },
+                { e ->
+                    e.printStackTrace()
+                })
+        )
+    }
+
+    private fun addCityAndPOIGeofence(context: Context, city: City) {
+        val observable = Single.just(city)
+            .subscribeOn(Schedulers.io())
+            .observeOn(AndroidSchedulers.mainThread())
+
+        disposables.add(
+            observable.subscribe({ c ->
+                val geofence = Geofence.Builder()
+                    .setRequestId("${CITY_LABEL}_${c.id}")
+                    .setNotificationResponsiveness(5 * 60 * 1000)
+                    .setExpirationDuration(Geofence.NEVER_EXPIRE)
+                    .setCircularRegion(
+                        city.lat,
+                        city.long,
+                        Utils.getRadius(city.areaKm2).toFloat()
+                    )
+                    .setTransitionTypes(
+                        Geofence.GEOFENCE_TRANSITION_EXIT
+                    )
+                    .build()
+
+                val geofencingRequest = GeofencingRequest.Builder().apply {
+                    setInitialTrigger(GeofencingRequest.INITIAL_TRIGGER_ENTER)
+                        .addGeofence(geofence)
+                }.build()
+
+                val geofencingClient = LocationServices.getGeofencingClient(context)
+                geofencingClient.addGeofences(geofencingRequest, getPendingIntent(context))
+                    ?.run {
+                        addOnSuccessListener {
+                            Log.i(TAG, "Current city geofence successfully added!")
+
+                            val poiList = loadPOIList(context)
+                            if (poiList.isEmpty()) {
+                                Log.e(TAG, "Cannot fetch POI list!")
+                            } else {
+                                //add city level geofences
+                                addPOIGeofences(city.name, poiList, context)
+                            }
+                        }
+                        addOnFailureListener {
+                            Log.e(TAG, "Current city geofence could not be added!")
+                        }
+                    }
+            },
+                { error ->
+                    Toast.makeText(context, "Error setting up city geofence!", Toast.LENGTH_SHORT)
+                        .show()
+                    error.printStackTrace()
+                })
+        )
     }
 }

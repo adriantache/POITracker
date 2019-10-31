@@ -14,25 +14,16 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.adriantache.poitracker.broadcastReceivers.GeofenceBroadcastReceiver
 import com.adriantache.poitracker.data.POIList
-import com.adriantache.poitracker.data.RegionList
-import com.adriantache.poitracker.models.City
 import com.adriantache.poitracker.models.POIExpanded
-import com.adriantache.poitracker.utils.Constants.CITY_LABEL
 import com.adriantache.poitracker.utils.Constants.FIRST_LAUNCH
-import com.adriantache.poitracker.utils.Constants.POI_GEOFENCE_RADIUS
-import com.adriantache.poitracker.utils.Constants.POI_LABEL
 import com.adriantache.poitracker.utils.Constants.POI_LIST
 import com.adriantache.poitracker.utils.Constants.SHARED_PREFS
-import com.adriantache.poitracker.utils.Utils
+import com.adriantache.poitracker.utils.GeofencingUtils.addCityGeofences
+import com.adriantache.poitracker.utils.GeofencingUtils.addPOIGeofences
 import com.adriantache.poitracker.utils.Utils.getCity
-import com.adriantache.poitracker.utils.Utils.getListByDistance
-import com.adriantache.poitracker.utils.Utils.getRadius
 import com.adriantache.poitracker.utils.Utils.isInsideCity
 import com.adriantache.poitracker.utils.Utils.loadPOIList
-import com.google.android.gms.location.Geofence
-import com.google.android.gms.location.Geofence.NEVER_EXPIRE
 import com.google.android.gms.location.GeofencingClient
-import com.google.android.gms.location.GeofencingRequest
 import com.google.android.gms.location.LocationServices
 import com.google.gson.Gson
 import io.reactivex.Single
@@ -41,18 +32,12 @@ import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.disposables.Disposable
 import io.reactivex.schedulers.Schedulers
 
+//TODO create main UI
+//TODO reset geofences on device restart (or maybe periodically with workmanager?)
 
 class MainActivity : AppCompatActivity() {
     private val disposables = CompositeDisposable()
-    private lateinit var geofencingClient: GeofencingClient
     private lateinit var poiList: List<POIExpanded>
-
-    private val geofencePendingIntent: PendingIntent by lazy {
-        val intent = Intent(this, GeofenceBroadcastReceiver::class.java)
-        // We use FLAG_UPDATE_CURRENT so that we get the same pending intent back when calling
-        // addGeofences() and removeGeofences().
-        PendingIntent.getBroadcast(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT)
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -181,156 +166,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setUpCityGeofences(userLocation: Location) {
-        geofencingClient = LocationServices.getGeofencingClient(this)
-
-        val observable = Single.create<List<City>> {
-            //get the list as ordered by distance
-            val orderedList = getListByDistance(userLocation, RegionList.cities)
-
-            if (orderedList.isNotEmpty()) {
-                it.onSuccess(orderedList)
-            } else {
-                throw IllegalArgumentException("Error sorting list by distance.")
-            }
-        }.subscribeOn(Schedulers.io())
-            .observeOn(AndroidSchedulers.mainThread())
-
-        disposables += observable.subscribe({
-            val geofenceList = mutableListOf<Geofence>()
-
-            it.forEach { city ->
-                //calculate max speed as 100kph in m/ms
-                val maxSpeed = (100 * 1000) / (60 * 60 * 1000)
-                var notificationResponsiveness =
-                    (Utils.getDistance(userLocation, city.lat, city.long) / maxSpeed).toInt()
-                //prevent setting an unreasonably low (<2 min) or high (>1 hour) value
-                if (notificationResponsiveness < 1000 * 60 * 2) {
-                    notificationResponsiveness = 12_000
-                } else if (notificationResponsiveness > 1000 * 60 * 60) {
-                    notificationResponsiveness = 3_600_000
-                }
-
-                geofenceList.add(
-                    Geofence.Builder()
-                        .setRequestId("${CITY_LABEL}_${city.id}")
-                        //loitering delay to prevent triggering geofence enter/exit events prematurely
-                        //todo tweak this value
-//                        .setLoiteringDelay(1000 * 30)
-                        //make geofence less responsive the farther away we are from a city
-                        //todo tweak this value
-                        .setNotificationResponsiveness(notificationResponsiveness)
-                        .setExpirationDuration(NEVER_EXPIRE)
-                        .setCircularRegion(
-                            city.lat,
-                            city.long,
-                            getRadius(city.areaKm2).toFloat()
-                        )
-                        .setTransitionTypes(
-                            Geofence.GEOFENCE_TRANSITION_ENTER or
-                                    Geofence.GEOFENCE_TRANSITION_EXIT
-                        )
-                        .build()
-                )
-
-                val geofencingRequest = GeofencingRequest.Builder().apply {
-                    setInitialTrigger(GeofencingRequest.INITIAL_TRIGGER_ENTER) //todo change this to dwell eventually
-                        .addGeofences(geofenceList)
-                }.build()
-
-                geofencingClient.addGeofences(geofencingRequest, geofencePendingIntent)?.run {
-                    addOnSuccessListener {
-                        Toast.makeText(
-                            this@MainActivity,
-                            "City geofences successfully added!",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                    addOnFailureListener {
-                        Toast.makeText(
-                            this@MainActivity,
-                            "City geofences could not be added!",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                }
-            }
-        }, { error ->
-            Toast.makeText(this, "Error setting up city geofences!", Toast.LENGTH_SHORT).show()
-            error.printStackTrace()
-        })
+        addCityGeofences(this, userLocation)
     }
 
     private fun setUpPoiGeofences(userLocation: Location, cityName: String) {
-        geofencingClient = LocationServices.getGeofencingClient(this)
-
-        val observable = Single.create<List<POIExpanded>> {
-            //only accept POIs from that city
-            val filteredList = poiList.filter { poi ->
-                poi.city.name == cityName
-            }
-
-            //get the list as ordered by distance
-            val orderedList = getListByDistance(userLocation, filteredList)
-
-            if (orderedList.isNotEmpty()) {
-                it.onSuccess(orderedList)
-            } else {
-                throw IllegalArgumentException("Error sorting list by distance.")
-            }
-        }.subscribeOn(Schedulers.io())
-            .observeOn(AndroidSchedulers.mainThread())
-
-        disposables += observable.subscribe({
-            val geofenceList = mutableListOf<Geofence>()
-
-            it.forEach { poi ->
-                geofenceList.add(
-                    Geofence.Builder()
-                        .setRequestId("${POI_LABEL}_${poi.id}") //again assuming names are unique
-                        //loitering delay to prevent triggering geofence enter/exit events prematurely
-                        //todo tweak this value
-//                        .setLoiteringDelay(1000 * 30)
-                        //todo tweak or automate this value
-                        .setNotificationResponsiveness(5 * 60 * 1000)
-                        .setExpirationDuration(NEVER_EXPIRE)
-                        .setCircularRegion(
-                            poi.lat,
-                            poi.long,
-                            POI_GEOFENCE_RADIUS
-                        )
-                        .setTransitionTypes(
-                            Geofence.GEOFENCE_TRANSITION_ENTER or
-                                    Geofence.GEOFENCE_TRANSITION_EXIT
-                        )
-                        .build()
-                )
-
-                val geofencingRequest = GeofencingRequest.Builder().apply {
-                    setInitialTrigger(GeofencingRequest.INITIAL_TRIGGER_ENTER) //todo change this to dwell eventually
-                        .addGeofences(geofenceList)
-                }.build()
-
-                geofencingClient.addGeofences(geofencingRequest, geofencePendingIntent)?.run {
-                    addOnSuccessListener {
-                        Toast.makeText(
-                            this@MainActivity,
-                            "POI geofences successfully added!",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                    addOnFailureListener {
-                        Toast.makeText(
-                            this@MainActivity,
-                            "POI geofences could not be added!",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                }
-            }
-        }, { error ->
-            Toast.makeText(this, "Error setting up POI geofences!", Toast.LENGTH_SHORT).show()
-            error.printStackTrace()
-        })
+        addPOIGeofences(cityName, poiList, this, userLocation)
     }
 
     override fun onDestroy() {
