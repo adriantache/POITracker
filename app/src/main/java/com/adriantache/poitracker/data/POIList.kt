@@ -16,6 +16,7 @@ object POIList {
     val values = listOf(
         POI("Epicerie Delices", 46.206169, 6.132623, "Grocery"),
         POI("Planete Charmilles", 46.208333, 6.124292, "Mall"),
+        POI("Coop",46.207447, 6.1301, "Supermarket"),
         POI("Geosatis", 46.517494, 6.562019, "Business")
     )
 }

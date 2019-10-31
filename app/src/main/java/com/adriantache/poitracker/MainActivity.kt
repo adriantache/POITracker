@@ -17,6 +17,11 @@ import com.adriantache.poitracker.data.POIList
 import com.adriantache.poitracker.data.RegionList
 import com.adriantache.poitracker.models.City
 import com.adriantache.poitracker.models.POIExpanded
+import com.adriantache.poitracker.utils.Constants.CITY_LABEL
+import com.adriantache.poitracker.utils.Constants.FIRST_LAUNCH
+import com.adriantache.poitracker.utils.Constants.POI_GEOFENCE_RADIUS
+import com.adriantache.poitracker.utils.Constants.POI_LABEL
+import com.adriantache.poitracker.utils.Constants.POI_LIST
 import com.adriantache.poitracker.utils.Utils
 import com.adriantache.poitracker.utils.Utils.getCity
 import com.adriantache.poitracker.utils.Utils.getListByDistance
@@ -35,10 +40,6 @@ import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.disposables.Disposable
 import io.reactivex.schedulers.Schedulers
 
-
-private const val FIRST_LAUNCH = "first_launch"
-private const val POI_LIST = "poi_list"
-private const val POI_GEOFENCE_RADIUS = 200f
 
 class MainActivity : AppCompatActivity() {
     private val disposables = CompositeDisposable()
@@ -147,7 +148,8 @@ class MainActivity : AppCompatActivity() {
 
         val observable = Single.create<Location> {
             fusedLocationClient.lastLocation.addOnSuccessListener { location ->
-                it.onSuccess(location)
+                if (location == null) it.onError(java.lang.IllegalArgumentException("Location is null even though it shouldn't be..."))
+                else it.onSuccess(location)
             }
 
             fusedLocationClient.lastLocation.addOnFailureListener { error ->
@@ -170,9 +172,6 @@ class MainActivity : AppCompatActivity() {
     //set up geofencing to notify the user based on the defined POIs
     private fun setUpGeofencing(userLocation: Location) {
         val city = isInsideCity(userLocation)
-
-        //todo remove this
-        setUpCityGeofences(userLocation)
 
         if (city == null) {
             //if user is outside city, setup city geofences based on flight time to nearest city
@@ -216,7 +215,7 @@ class MainActivity : AppCompatActivity() {
 
                 geofenceList.add(
                     Geofence.Builder()
-                        .setRequestId("CITY_${city.name}")
+                        .setRequestId("${CITY_LABEL}_${city.name}")
                         //loitering delay to prevent triggering geofence enter/exit events prematurely
                         //todo tweak this value
 //                        .setLoiteringDelay(1000 * 30)
@@ -285,7 +284,7 @@ class MainActivity : AppCompatActivity() {
             it.forEach { poi ->
                 geofenceList.add(
                     Geofence.Builder()
-                        .setRequestId("POI_${poi.name}") //again assuming names are unique
+                        .setRequestId("${POI_LABEL}_${poi.name}") //again assuming names are unique
                         //loitering delay to prevent triggering geofence enter/exit events prematurely
                         //todo tweak this value
 //                        .setLoiteringDelay(1000 * 30)
