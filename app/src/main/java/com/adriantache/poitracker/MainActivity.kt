@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -17,6 +18,7 @@ import com.adriantache.poitracker.models.POIExpanded
 import com.adriantache.poitracker.utils.Constants.FIRST_LAUNCH
 import com.adriantache.poitracker.utils.Constants.POI_LIST
 import com.adriantache.poitracker.utils.Constants.SHARED_PREFS
+import com.adriantache.poitracker.utils.GeofencingUtils
 import com.adriantache.poitracker.utils.GeofencingUtils.addCityGeofences
 import com.adriantache.poitracker.utils.GeofencingUtils.addPOIGeofences
 import com.adriantache.poitracker.utils.Utils.generatePoiString
@@ -37,6 +39,9 @@ import io.reactivex.schedulers.Schedulers
 
 //TODO create main UI
 //TODO reset geofences on device restart (or maybe periodically with workmanager?)
+//TODO ensure location is on as well as WiFi
+
+private const val TAG = "MainActivity"
 
 class MainActivity : AppCompatActivity() {
     private val disposables = CompositeDisposable()
@@ -75,16 +80,14 @@ class MainActivity : AppCompatActivity() {
             poiList = loadPOIList(this)
 
             if (poiList.isEmpty()) {
-                Toast.makeText(this, "Error getting POI list from storage!", Toast.LENGTH_SHORT)
-                    .show()
+                Log.e(TAG, "Error getting POI list from storage!")
+                processPOIs()
             } else {
                 //reset geofencing
                 //ensure we have necessary permissions before requesting location
-                if (!checkLocationPermissions()) {
-                    requestLocationPermissions()
-                } else {
-                    getUserLocation()
-                }
+                checkLocationPermissions()
+
+                getUserLocation()
             }
         }
     }
@@ -101,16 +104,13 @@ class MainActivity : AppCompatActivity() {
             val tempList = mutableListOf<POIExpanded>()
 
             it.forEachIndexed { index, poi ->
-                val (city, distance) = getCity(poi)
-
                 val generatedPoi = POIExpanded(
                     index + 1,
                     poi.name,
                     poi.lat,
                     poi.long,
                     poi.category,
-                    city,
-                    distance
+                    getCity(poi)
                 )
 
                 tempList.add(generatedPoi)
@@ -130,9 +130,9 @@ class MainActivity : AppCompatActivity() {
                 sharedPref.apply()
 
                 //ensure we have necessary permissions before requesting location
-                if (!checkLocationPermissions()) {
-                    requestLocationPermissions()
-                } else getUserLocation()
+                checkLocationPermissions()
+
+                getUserLocation()
             }
         },
             { error ->
@@ -144,8 +144,6 @@ class MainActivity : AppCompatActivity() {
     //get the current location of the user to determine geofencing strategy (city or POI level)
     private fun getUserLocation() {
         //get user location
-        val fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
-
         val observable = Single.create<Location> {
             fusedLocationClient.lastLocation.addOnSuccessListener { location ->
                 if (location == null) it.onError(java.lang.IllegalArgumentException("Location is null even though it shouldn't be..."))
@@ -167,14 +165,15 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "Error getting user location!", Toast.LENGTH_SHORT).show()
             error.printStackTrace()
 
-            //todo set up city-level geofencing in this situation?
-//            setUpCityGeofences(null)
+            // set up city-level geofencing in this situation
+            setUpGeofencing(null)
         })
     }
 
     //set up geofencing to notify the user based on the defined POIs
-    private fun setUpGeofencing(userLocation: Location) {
-        val city = isInsideCity(userLocation)
+    private fun setUpGeofencing(userLocation: Location?) {
+        val city = if (userLocation == null) null
+        else isInsideCity(userLocation)
 
         if (city == null) {
             //if user is outside city, setup city geofences based on flight time to nearest city
@@ -192,7 +191,6 @@ class MainActivity : AppCompatActivity() {
             priority = PRIORITY_HIGH_ACCURACY
         }
 
-
         fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, null)
     }
 
@@ -205,6 +203,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         disposables.clear()
+        GeofencingUtils.disposables.clear()
 
         //stop location tracking
         fusedLocationClient.removeLocationUpdates(locationCallback)
@@ -219,7 +218,7 @@ class MainActivity : AppCompatActivity() {
         getUserLocation()
     }
 
-    private fun checkLocationPermissions(): Boolean {
+    private fun checkLocationPermissions() {
         if (ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.ACCESS_FINE_LOCATION
@@ -228,9 +227,7 @@ class MainActivity : AppCompatActivity() {
                 this,
                 Manifest.permission.ACCESS_BACKGROUND_LOCATION
             ) != PackageManager.PERMISSION_GRANTED
-        ) return false
-
-        return true
+        ) requestLocationPermissions()
     }
 
     private fun requestLocationPermissions() {

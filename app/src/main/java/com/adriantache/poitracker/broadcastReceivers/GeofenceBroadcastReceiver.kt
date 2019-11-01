@@ -43,7 +43,7 @@ import io.reactivex.schedulers.Schedulers
 private const val TAG = "GeofenceBroadcastReceiver"
 
 class GeofenceBroadcastReceiver : BroadcastReceiver() {
-    private val disposables = CompositeDisposable() //todo figure out how to use this or remove it
+    private val disposables = CompositeDisposable() //todo figure out how to use this in a BroadcastReceiver
     private lateinit var notificationManager: NotificationManager
 
     override fun onReceive(context: Context?, intent: Intent?) {
@@ -80,9 +80,6 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
                 geofenceTransition,
                 triggeringGeofences
             )
-
-            // Send notification and log the transition details.
-//            sendNotification(geofenceTransitionDetails)
             Log.i(TAG, geofenceTransitionDetails)
         } else {
             // Log the error.

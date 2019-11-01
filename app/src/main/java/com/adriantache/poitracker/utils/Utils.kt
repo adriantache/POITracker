@@ -17,7 +17,7 @@ import kotlin.math.sqrt
 
 object Utils {
     //get closest city to POI and distance
-    fun getCity(poi: POI): Pair<City, Float> {
+    fun getCity(poi: POI): City {
         var city: City = RegionList.cities[0]
         var minDistance: Float = getDistance(poi.lat, poi.long, city.lat, city.long)
 
@@ -30,7 +30,7 @@ object Utils {
             }
         }
 
-        return city to minDistance
+        return city
     }
 
     //get distance between to places in metres
@@ -57,6 +57,7 @@ object Utils {
 
     //check if user is inside a city
     //assumption: city is a circle
+    //assumption: no nearby or overlapping cities
     fun isInsideCity(location: Location): City? {
         RegionList.cities.forEach { city ->
             val cityRadius = getRadius(city.areaKm2)

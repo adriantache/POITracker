@@ -6,6 +6,5 @@ data class POIExpanded(
     override val lat: Double,
     override val long: Double,
     val category: String,
-    val city: City,
-    val distanceFromCity: Float
+    val city: City
 ) : Coordinates, Distinct

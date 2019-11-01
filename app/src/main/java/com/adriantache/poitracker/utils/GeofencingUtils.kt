@@ -22,8 +22,7 @@ import io.reactivex.schedulers.Schedulers
 private const val TAG = "Geofencing_utils"
 
 object GeofencingUtils {
-    //todo [IMPORTANT] dispose of observers
-    private val disposables = CompositeDisposable()
+    val disposables = CompositeDisposable()
 
     //get the general pending intent that registers the BroadcastReceiver to listen to Geofence events
     fun getPendingIntent(context: Context): PendingIntent? {
