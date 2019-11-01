@@ -79,25 +79,17 @@ object Utils {
     fun <T> getListByDistance(
         location: Location,
         list: List<T>
-    ): List<T> where T : Coordinates, T : Distinct {
+    ): List<T> where T : Coordinates {
         val orderedList = list.sortedBy {
             getDistance(location, it.lat, it.long)
         }
 
         //only return at most 100 result, which is the maximum number of geofences
         return if (list.size <= 100) {
-            regenerateIDs(orderedList)
+            orderedList
         } else {
             orderedList.subList(0, 99)
         }
-    }
-
-    private fun <T> regenerateIDs(list: List<T>): List<T> where T : Distinct {
-        list.forEachIndexed { index, element ->
-            element.id = index + 1
-        }
-
-        return list
     }
 
     //translate geofence errors into Strings

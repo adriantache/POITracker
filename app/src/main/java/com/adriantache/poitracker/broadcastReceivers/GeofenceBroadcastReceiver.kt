@@ -12,7 +12,6 @@ import android.content.Context
 import android.content.Context.NOTIFICATION_SERVICE
 import android.content.Intent
 import android.util.Log
-import android.widget.Toast
 import com.adriantache.poitracker.MainActivity
 import com.adriantache.poitracker.R
 import com.adriantache.poitracker.data.RegionList
@@ -43,7 +42,8 @@ import io.reactivex.schedulers.Schedulers
 private const val TAG = "GeofenceBroadcastReceiver"
 
 class GeofenceBroadcastReceiver : BroadcastReceiver() {
-    private val disposables = CompositeDisposable() //todo figure out how to use this in a BroadcastReceiver
+    private val disposables =
+        CompositeDisposable() //todo figure out how to use this in a BroadcastReceiver
     private lateinit var notificationManager: NotificationManager
 
     override fun onReceive(context: Context?, intent: Intent?) {
@@ -123,7 +123,12 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
                         Log.i(TAG, "Entered city (id = $id)")
 
                         //get city from ID
-                        val city = RegionList.cities[id - 1]
+                        val city = RegionList.cities.find { city -> city.id == id }
+
+                        if (city == null) {
+                            Log.e(TAG, "Cannot find City $id in ${RegionList.cities}!")
+                            return@subscribe
+                        }
 
                         //trigger city notification
                         triggerCityNotification(city, context)
@@ -151,11 +156,12 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
                             Log.e(TAG, "Cannot fetch POI list!")
                             return@subscribe
                         }
-                        //todo refactor this to not depend on list position
-                        val poi = poiList[id - 1]
+
+                        val poi = poiList.find { poi -> poi.id == id }
 
                         //trigger POI notification
-                        triggerPOINotification(poi, context)
+                        if (poi != null) triggerPOINotification(poi, context)
+                        else Log.e(TAG, "Cannot find POI $id in $poiList!")
                     } else if (geofenceTransition == Geofence.GEOFENCE_TRANSITION_EXIT) {
                         Log.i(TAG, "Exited POI (id = $id)")
 
